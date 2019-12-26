@@ -5,27 +5,31 @@ import numpy as np
 import sys
 import glob
 import random
+import scipy
 from scipy import signal
+
 
 '''
 hyperparameters define
 '''
-Net1TrainDatadir = "F://TIMIT/TIMIT/TIMIT/TRAIN/../../*.WAV"
-Net1TestDatadir = "F://TIMIT/TIMIT/TIMIT/TEST/../../*.WAV"
+Net1TrainDatadir = "F://TIMIT/TIMIT/TIMIT/TRAIN/*/*/*.WAV"
+Net1TestDatadir = "F://TIMIT/TIMIT/TIMIT/TEST/*/*/*.WAV"
+Net2TrainDatadir = "D://study/programming/SLP/project/voice_conversion/datasets/LJSpeech-1.1/*.wav"
 Net1Batchsize = 20
-sr: 16000
-frame_shift: 0.005
-frame_length:  0.025
-win_length: 400
-hop_length: 80
-n_fft: 512
-preemphasis: 0.97
-n_mfcc: 40
-n_iter: 60 # Number of inversion iterations
-n_mels: 80
-duration: 2
-max_db: 35
-min_db: -55
+
+sr = 16000
+frame_shift = 0.005
+frame_length = 0.025
+win_length = 400
+hop_length = 80
+n_fft = 512
+preemphasis = 0.97
+n_mfcc = 40
+n_iter = 60 # Number of inversion iterations
+n_mels = 80
+duration = 2
+max_db = 35
+min_db = -55
 phns = ['h#', 'aa', 'ae', 'ah', 'ao', 'aw', 'ax', 'ax-h', 'axr', 'ay', 'b', 'bcl',
         'ch', 'd', 'dcl', 'dh', 'dx', 'eh', 'el', 'em', 'en', 'eng', 'epi',
         'er', 'ey', 'f', 'g', 'gcl', 'hh', 'hv', 'ih', 'ix', 'iy', 'jh',
@@ -35,7 +39,7 @@ phns = ['h#', 'aa', 'ae', 'ah', 'ao', 'aw', 'ax', 'ax-h', 'axr', 'ay', 'b', 'bcl
 class model1():
     def __init__(self, config):
         '''
-        please initialize the network:
+        `please initialize the network:
             1. framework
             2. hyperparameters(included in config)
             3. the initial value of parameters
@@ -104,6 +108,19 @@ class trainer():
 '''
 utils
 '''
+def wav_random_crop(wav, sr, duration):
+    assert (wav.ndim <= 2)
+
+    target_len = sr * duration
+    wav_len = wav.shape[-1]
+    start = np.random.choice(range(np.maximum(1, wav_len - target_len)), 1)[0]
+    end = start + target_len
+    if wav.ndim == 1:
+        wav = wav[start:end]
+    else:
+        wav = wav[:, start:end]
+    return wav
+
 def load_vocab():
     phn2idx = {phn: idx for idx, phn in enumerate(phns)}
     idx2phn = {idx: phn for idx, phn in enumerate(phns)}
@@ -130,9 +147,9 @@ def _get_mfcc_and_spec(wav, preemphasis_coeff, n_fft, win_length, hop_length):
     # Get mfccs, amp to db
     mag_db = librosa.amplitude_to_db(mag)
     mel_db = librosa.amplitude_to_db(mel)
-    # mfccs = np.array(librosa.feature.mfcc(y=y_preem, sr=sr, n_mfcc=n_mfcc, \
-    #    n_fft=n_fft, hop_length=hop_length, win_length=win_length, n_mels=n_mels, ))
-    mfccs = np.array(np.dot(librosa.filters.dct(n_mfcc, mel_db.shape[0]), mel_db))
+    mfccs = np.array(librosa.feature.mfcc(y=y_preem, sr=sr, n_mfcc=n_mfcc, \
+        n_fft=n_fft, hop_length=hop_length, win_length=win_length, n_mels=n_mels, ))
+    # mfccs = np.array(np.dot(scipy.fftpack.dct() (n_mfcc, mel_db.shape[0]), mel_db))
 
     # Normalization (0 ~ 1)
     mag_db = normalize(mag_db, max_db, min_db)
@@ -151,15 +168,16 @@ def get_mfcc_and_phns(filename, trim=False, random_crop=True):
     num_timesteps = mfccs.shape[0]
 
     # phones (targets)
-    phn_file = filename.replace("WAV.wav", "PHN").replace("wav", "PHN")
+    phn_file = filename.replace("WAV", "PHN")
     phn2idx, _ = load_vocab()
     phns = np.zeros(shape=(num_timesteps,))
     bnd_list = []
-    for line in open(phn_file, 'r').read().splitlines():
-        start_point, _, phn = line.split()
-        bnd = int(start_point) // hop_length
-        phns[bnd:] = phn2idx[phn]
-        bnd_list.append(bnd)
+    with open(phn_file, 'r', encoding='UTF-8') as file:
+        for line in file:
+            start_point, _, phn = line.split()
+            bnd = int(start_point) // hop_length
+            phns[bnd:] = phn2idx[phn]
+            bnd_list.append(bnd)
 
     # Trim
     if trim:
@@ -190,6 +208,25 @@ def get_filename(dir):
     wavfiles = glob.glob(dir)
     return wavfiles
 
+def get_mfccs_and_spectrogram(wav_file, trim=True, random_crop=False):
+    '''
+    This is applied in `train2`, `test2` or `convert` phase.
+    '''
+    # Load
+    wav, _ = librosa.load(wav_file, sr=sr)
+
+    # Trim
+    if trim:
+        wav, _ = librosa.effects.trim(wav, frame_length=win_length, hop_length=hop_length)
+
+    if random_crop:
+        wav = wav_random_crop(wav, sr, duration)
+
+    # Padding or crop
+    length = sr * duration
+    wav = librosa.util.fix_length(wav, length)
+
+    return _get_mfcc_and_spec(wav, preemphasis, n_fft, win_length, hop_length)
 '''
 generate dataflow
 '''
@@ -207,15 +244,21 @@ def dataflow_gen(dir, type):
     output:
     dataflow
     '''
-    dataflow = {}
+    dataflow = []
+    data = {}
+    # Net1Dataflow: x_mfcc, y_ppgs
+    # Net2Dataflow: x_mcff, y_megDB, y_melDB
+
     if type == 'Net1Dataflow':
         filenames = get_filename(dir)
         for filename in filenames:
-            dataflow['x_mfcc'], dataflow['phns'] = get_mfcc_and_phns(filename)
+            data['x_mfcc'], data['y_ppgs'] = get_mfcc_and_phns(filename)
+            dataflow.append(data)
     if type == 'Net2Dataflow':
         filenames = get_filename(dir)
         for filename in filenames:
-            pass
+            data['x_mfcc'], data['y_megDB'], data['y_melDB'] = get_mfccs_and_spectrogram(filename)
+            dataflow.append(data)
     return dataflow
 
 def conversion(dataflow):
@@ -226,7 +269,7 @@ def conversion(dataflow):
         restruction 
     output: wav file
     '''
-
+    
 if __name__ == "__main__":
     #train
     '''
@@ -234,8 +277,12 @@ if __name__ == "__main__":
     '''
     config = []
     Net1Dataflow = dataflow_gen(Net1TrainDatadir, r'Net1Dataflow')
-    NetTrainer = trainer(config)
-    NetTrainer.trainNet1(Net1Dataflow)
+    
+    # NetTrainer = trainer(config)
+    # NetTrainer.trainNet1(Net1Dataflow)
+
+    # Net2Dataflow = dataflow_gen(Net2TrainDatadir, r'Net2Dataflow')
+    # NetTrainer.trainNet2(Net2Dataflow)
 
     '''
     evaluate train1
