@@ -8,13 +8,19 @@ import random
 import scipy
 from scipy import signal
 import tensorflow as tf
+import time
+time_start = time.time()
+import numpy as np
+import random
+batch_size1 = 4400
 
 '''
 hyperparameters define
 '''
-Net1TrainDatadir = "F://TIMIT/TIMIT/TIMIT/TRAIN/*/*/*.WAV"
-Net1TestDatadir = "F://TIMIT/TIMIT/TIMIT/TEST/*/*/*.WAV"
-Net2TrainDatadir = "D://study/programming/SLP/project/voice_conversion/datasets/LJSpeech-1.1/*.wav"
+Net1TrainDatadir = "C://Users/-dell/Desktop/SLP/TIMIT/TIMIT/TRAIN/*/*/*.WAV"
+Net1TestDatadir = "TIMIT/TIMIT/TEST/*/*/*.WAV"
+
+Net2TrainDatadir = "C://Users/-dell/Desktop/SLP/arctic/slt/wav/*.wav"
 Net1Batchsize = 20
 
 sr = 16000
@@ -38,6 +44,7 @@ phns = ['h#', 'aa', 'ae', 'ah', 'ao', 'aw', 'ax', 'ax-h', 'axr', 'ay', 'b', 'bcl
 numbers =10
 cost_value = 0.01
 acc_value = 0.9
+emphasis_magnitude = 1.2
 
 train2_hidden_units = 512
 train2_dropout_rate = 0
@@ -57,7 +64,6 @@ train1_norm_type = 'ins'
 train1_lr = 0.0003
 train1_num_epochs = 10000
 train1_steps_per_epoch = 100
-
 
 def gru(inputs, num_units=None, bidirection=False, seqlens=None, scope="gru", reuse=None):
     with tf.variable_scope(scope, reuse=reuse):
@@ -141,7 +147,7 @@ def normalize(inputs,type="bn",decay=.999,epsilon=1e-8,is_training=True,
             if inputs_rank==2:
                 #删除[1,2]内的为1的维度
                 outputs = tf.squeeze(outputs, axis=[1, 2])
-            elif input_rank==3:
+            elif inputs_rank==3:
                 #删除1内为1的维度
                 outputs = tf.squeeze(outputs, axis=1)
         else:# fallback to naive batch norm
@@ -252,17 +258,22 @@ def cbhg(input, num_banks, hidden_units, num_highway_blocks, norm_type='bn', is_
         #size由1到k的一组卷积滤波器，输入的序列首先和k组一维卷积滤波器进行卷积，其中第k组包含宽度为k的Ck滤波器
         out = conv1d_banks(input,K=num_banks,num_units=hidden_units,norm_type=norm_type,
                            is_training=is_training)  # (N, T, K * E / 2)
-        
+        print("11111",out)
         #最大池化层：增加局部不变性，使结果更平滑
         out = tf.layers.max_pooling1d(out, 2, 1, padding="same")  # (N, T, K * E / 2)
-        
+        print("11111",out)
         #进一步将处理后的序列传入固定宽度的一维卷积层
         out = conv1d(out, hidden_units, 3, scope="conv1d_1")  # (N, T, E/2)
+        print("11111",out)
         out = normalize(out, type=norm_type, is_training=is_training, activation_fn=tf.nn.relu)
+        print("11111",out)
+        
         out = conv1d(out, hidden_units, 3, scope="conv1d_2")  # (N, T, E/2)
+        print("11111",out)
         #将输出序列和原始序列相加
+        print("input",input)
         out += input  # (N, T, E/2) # residual connections
-
+        print("11111",out)
         #输入进多层highway layers，高速公路网络可以让梯度更好地向前流动
         for i in range(num_highway_blocks):
            out = highwaynet(out, num_units=hidden_units,
@@ -279,10 +290,11 @@ def loss1(x_mfccs,logits,y_ppgs):
     loss = tf.reduce_mean(loss)
     return loss
 
-def acc(x_mfccs,preds,y_ppgs):
+def acc1(x_mfccs,preds,y_ppgs):
     istarget = tf.sign(tf.abs(tf.reduce_sum(x_mfccs, -1)))  # indicator: (N, T)
     num_hits = tf.reduce_sum(tf.to_float(tf.equal(preds, y_ppgs)) * istarget)
     num_targets = tf.reduce_sum(istarget)
+    
     acc = num_hits / num_targets
     return acc
 
@@ -300,21 +312,6 @@ def network1(x_mfcc, is_training):
 
     return ppgs, preds, logits
 
-
-#x_mffcs：[batch_size, T, n_phns]:
-def train1(inputs):    
-    is_training = 1
-    for k in range(numbers):
-        x_mfccs, y_ppgs = inputs
-        with tf.variable_scope('net1'):
-            ppgs, preds, logits = network1(x_mfccs, is_training)
-        cost = loss1(x_mfccs,logits,y_ppgs)
-        acc = acc(x_mfccs,logits,y_ppgs)
-        if cost<=cost_value and acc>=acc_value:
-            print("train1 is over!")
-            break
-    outputs = ppgs 
-    return outputs
 
 def network2(ppgs, is_training,y_mel,y_spec):
     #pre-net
@@ -339,17 +336,33 @@ def loss2(pred_spec,y_spec,pred_mel,y_mel):
     loss = loss_spec + loss_mel
     return loss
 
-def train2(input,):
-    is_training = 1
-    for k in range(numbers):
-        with tf.variable_scope('net2'):
-            pred_spec, pred_mel = network(ppgs, is_training)
-        cost = loss2(pred_spec, y_spec, pred_mel, y_mel)
-        if cost<cost_value:
-            print("train2 is ok!")
-            break
-    outputs = pred_spec,pred_mel
-    return outputs
+def predict1(x_mfcc):
+    with tf.Session()as sess:
+        saver1 = tf.train.import_meta_graph('train1_model.meta')
+        saver1.restore(sess,tf.train.latest_checkpoint('./'))
+        # graph = tf.get_default_graph()
+        x = tf.placeholder(tf.float32,[None,401,40])
+        #ppgs1 = graph.get_tensor_by_name("ppgs:0")
+   
+        ppgs = sess.run('ppgs:0',feed_dict = {x:x_mfcc})
+                
+        return ppgs
+ 
+def predict2(x_mfcc):
+    ppgs = predict1(x_mfcc)
+    with tf.Session()as sess:
+        saver1 = tf.train.import_meta_graph('train2_model.meta')
+        saver1.restore(sess,tf.train.latest_checkpoint('./'))
+        # graph = tf.get_default_graph()
+        x = tf.placeholder(tf.float32,[None,401,61])
+        #ppgs1 = graph.get_tensor_by_name("ppgs:0")
+    
+    
+        #mfccs = [[[1 for i in range(40)]for j in range(401)]for k in range (1)]
+        #mfccs = np.array(mfccs)
+    
+        pred_spec = sess.run('pred_spec/BiasAdd:0',feed_dict = {x:ppgs})
+    return pred_spec
 
 class model1():
     def __init__(self, config):
@@ -367,35 +380,52 @@ class model1():
             1. what's the number of columns and rows
             2. what does the columns and rows mean
         '''
-
+        x = tf.placeholder(tf.float32,[None,401,40])
+        y = tf.placeholder(tf.int32,[None,401])
+        keep_prob = tf.placeholder(tf.float32)
+        #x_mfccs, y_ppgs = dataflow
+        #dataflow = np.array(dataflow)
+        dataflow[0] = np.asarray(dataflow[0])
+        dataflow[1] = np.asarray(dataflow[1])
+        #x_mfccs = np.asarray(x_mfccs)
+        #y_ppgs = np.asarray(y_ppgs)
+        
+        dataflow[1] = dataflow[1].astype(int)
+        #y_ppgs = y_ppgs.astype(int)
+        #dataflow 转化为tensor
+        #x_mfccs = tf.convert_to_tensor(x_mfccs)
+        #y_ppgs = tf.convert_to_tensor(y_ppgs)
+        x_mfccs,y_ppgs = batch_data(dataflow,32)
         is_training = 1
-        for k in range(numbers):
-            x_mfccs, y_ppgs = dataflow
-            with tf.Session() as sess:
-                sess.run(x_mfccs)
-                sess.run(y_ppgs)
-            
-            outputs1 = network1(x_mfccs, is_training)
-            with tf.Session() as sess:
-                sess.run(outputs1)
-            ppgs, preds, logits = outputs1
-            with tf.Session() as sess:
-                sess.run(ppgs)
-                sess.run(preds)
-                sess.run(logits)
-            cost = loss1(x_mfccs,logits,y_ppgs)
-            acc = acc(x_mfccs,logits,y_ppgs)
-            with tf.Session() as sess:
-                sess.run(cost)
-                sess.run(acc)
-            if cost<=cost_value and acc>=acc_value:
-                print("train1 is over!")
-                break
-        outputs = ppgs
-        with tf.Session() as sess:
-            sess.run(outputs) 
-        return outputs
 
+        ppgs, preds, logits = network1(x_mfccs, is_training)
+        #y_ppgs=tf.to_int32(y_ppgs)
+ 
+        cost = loss1(x_mfccs,logits,y_ppgs)
+          
+        train_step = tf.train.AdamOptimizer(0.0003).minimize(cost)
+
+        acc = acc1(x_mfccs,preds,y_ppgs)
+
+        # Add ops to save and restore all the variables.
+        saver = tf.train.Saver()
+        # dict1 = {}
+        with tf.Session()as sess:
+            
+            sess.run(tf.global_variables_initializer())
+            for i in range(10000):
+                batch1,batch2 = batch_data(dataflow,32)
+                time1 = time.time()
+                print("第",i+1,"次训练：")
+                train_step.run(feed_dict={x:batch1,y:batch2,keep_prob:0.5})
+                print(cost.eval())
+                time2 = time.time()
+                print("花费时间：",time2-time1)
+            print("准确率是：",acc.eval())
+            print(ppgs)
+            print(acc)
+            saver.save(sess, 'train1_model')
+    
 class model2():
     def __init__(self, config):
         '''
@@ -412,22 +442,44 @@ class model2():
             1. what's the number of columns and rows
             2. what does the columns and rows mean
         '''
-        is_training = 1
-        for k in range(numbers):
-            pred_spec, pred_mel = network(ppgs, is_training)
-            with tf.Session() as sess:
-                sess.run(pred_spec)
-                sess.run(pred_mel)
-            cost = loss2(pred_spec,y_spec, pred_mel, y_mel)
-            with tf.Session() as sess:
-                sess.run(cost)
-            if cost<cost_value:
-                print("train2 is ok!")
-                break
-        outputs = pred_spec,pred_mel
-        with tf.Session() as sess:
-            sess.run(outputs)
-        return outputs
+        x = tf.placeholder(tf.float32,[None,401,40])
+        y = tf.placeholder(tf.float32,[None,401,257])
+        z = tf.placeholder(tf.float32,[None,401,80])
+        keep_prob = tf.placeholder(tf.float32)
+        
+        x_mfcc,y_spec,y_mel = batch_data2(dataflow,32)
+        
+        x_mfcc = np.asarray(x_mfcc)#x_mfcc
+        y_spec = np.asarray(y_spec)#y_spec
+        y_mel = np.asarray(y_mel)#y_mel
+        
+        #ppgs = model1.predict(x_mfcc)
+        ppgs = predict1(x_mfcc)
+        
+        is_training =1
+                
+        pred_spec, pred_mel = network2(ppgs, is_training,y_mel,y_spec)
+        
+        cost2 = loss2(pred_spec,y_spec,pred_mel,y_mel)
+        train_step = tf.train.AdamOptimizer(0.0003).minimize(cost2)
+        # Add ops to save and restore all the variables.
+        saver2 = tf.train.Saver()
+     
+        with tf.Session()as sess:
+            
+            
+            sess.run(tf.global_variables_initializer())
+            for i in range(200):
+                batch1,batch2,batch3 = batch_data2(dataflow,32)
+                time1 = time.time()
+                print("第",i+1,"次训练：")
+                train_step.run(feed_dict={x:batch1,y:batch2,z:batch3,keep_prob:0.5})
+                print(cost2.eval())
+                time2 = time.time()
+                print("花费时间：",time2-time1)
+                print(pred_spec)
+            
+            saver2.save(sess, 'train2_model')
 
 class trainer():
     def __init__(self, config):
@@ -450,6 +502,7 @@ class trainer():
             train net2
         output: model paras
         '''
+        net2.train(dataflow)
         self.model2 = net2
         
 
@@ -586,20 +639,19 @@ def get_mfccs_and_spectrogram(wav_file, trim=True, random_crop=False):
 '''
 generate dataflow
 '''
-
 def dataflow_gen(dir, type):
     '''
     input:
     type: Net1Dataflow or Net2Dataflow or Conversion dataflow
     dir: file dir
-
         get filename
         feature extraction
         aggregation
-
     output:
     dataflow
     '''
+    dataflow_x_mfcc = []
+    dataflow_y_ppgs = []
     dataflow = []
     data = {}
     # Net1Dataflow: x_mfcc, y_ppgs
@@ -607,17 +659,103 @@ def dataflow_gen(dir, type):
 
     if type == 'Net1Dataflow':
         filenames = get_filename(dir)
+        gg = 0
         for filename in filenames:
-            data['x_mfcc'], data['y_ppgs'] = get_mfcc_and_phns(filename)
-            dataflow.append(data)
+            gg+=1
+            if gg%200 == 0:
+                print("第",gg,"个文件：",filename)
+            
+            if gg<=batch_size1:
+                
+                data['x_mfcc'], data['y_ppgs'] = get_mfcc_and_phns(filename)
+                if gg ==2:
+                    print("hhhhhhhhhhhhhhh:",data['x_mfcc'])
+                    print("sssssssssssssss:",data['y_ppgs'])
+                dataflow_x_mfcc.append(data['x_mfcc'])
+                dataflow_y_ppgs.append(data['y_ppgs'])
+        dataflow.append(dataflow_x_mfcc)
+        dataflow.append(dataflow_y_ppgs)
+        
+    data_x_mfcc2 = []
+    data_y_spec = []
+    data_y_mel = []    
+        
     if type == 'Net2Dataflow':
         filenames = get_filename(dir)
+        gg = 0
         for filename in filenames:
-            data['x_mfcc'], data['y_megDB'], data['y_melDB'] = get_mfccs_and_spectrogram(filename)
-            dataflow.append(data)
+            gg+=1
+            if gg%200 == 0:
+                print("第",gg,"个文件：",filename)
+            if gg<=batch_size1:
+                
+                data['x_mfcc'], data['y_megDB'], data['y_melDB'] = get_mfccs_and_spectrogram(filename)
+                data_x_mfcc2.append(data['x_mfcc'])
+                data_y_spec.append(data['y_megDB'])
+                data_y_mel.append(data['y_melDB'])
+        dataflow.append(data_x_mfcc2)
+        dataflow.append(data_y_spec)
+        dataflow.append(data_y_mel)
     return dataflow
 
-def conversion(dataflow):
+
+def denormalize_db(norm_db, max_db, min_db):
+    """
+    Denormalize the normalized values to be original dB-scaled value.
+    :param norm_db: Normalized spectrogram.
+    :param max_db: Maximum dB.
+    :param min_db: Minimum dB.
+    :return: Decibel-scaled spectrogram.
+    """
+    db = np.clip(norm_db, 0, 1) * (max_db - min_db) + min_db
+    return db
+
+def spec2wav(mag, n_fft, win_length, hop_length, num_iters=30, phase=None):
+    """
+    Get a waveform from the magnitude spectrogram by Griffin-Lim Algorithm.
+
+    Parameters
+    ----------
+    mag : np.ndarray [shape=(1 + n_fft/2, t)]
+        Magnitude spectrogram.
+
+    n_fft : int > 0 [scalar]
+        FFT window size.
+
+    win_length  : int <= n_fft [scalar]
+        The window will be of length `win_length` and then padded
+        with zeros to match `n_fft`.
+
+    hop_length : int > 0 [scalar]
+        Number audio of frames between STFT columns.
+
+    num_iters: int > 0 [scalar]
+        Number of iterations of Griffin-Lim Algorithm.
+
+    phase : np.ndarray [shape=(1 + n_fft/2, t)]
+        Initial phase spectrogram.
+
+    Returns
+    -------
+    wav : np.ndarray [shape=(n,)]
+        The real-valued waveform.
+
+    """
+    assert (num_iters > 0)
+    if phase is None:
+        phase = np.pi * np.random.rand(*mag.shape)
+    stft = mag * np.exp(1.j * phase)
+    wav = None
+    for i in range(num_iters):
+        wav = librosa.istft(stft, win_length=win_length, hop_length=hop_length)
+        if i != num_iters - 1:
+            stft = librosa.stft(wav, n_fft=n_fft, win_length=win_length, hop_length=hop_length)
+            _, phase = librosa.magphase(stft)
+            phase = np.angle(phase)
+            stft = mag * np.exp(1.j * phase)
+    return wav
+
+def conversion(data, preemphasis_coeff=0.97):
     '''
     dataflow: one file MFCC
         apply net1 to get ppgs
@@ -625,6 +763,77 @@ def conversion(dataflow):
         restruction 
     output: wav file
     '''
+
+    # read models
+    pred_spec = predict2(data['x_mfcc'])
+    y_spec = data['y_megDB']
+
+    pred_spec = denormalize_db(pred_spec, max_db, min_db)
+    y_spec = denormalize_db(y_spec, max_db, min_db)
+
+    # Db to amp
+    pred_spec = librosa.db_to_amplitude(pred_spec)
+    y_spec = librosa.db_to_amplitude(y_spec)
+
+    # Emphasize the magnitude
+    pred_spec = np.power(pred_spec, emphasis_magnitude)
+    y_spec = np.power(y_spec, emphasis_magnitude)
+
+    # Spectrogram to waveform
+    pred_audio = np.array(map(lambda spec: spec2wav(spec.T, n_fft, win_length, hop_length,
+                                               n_iter), pred_spec))
+    y_audio = np.array(map(lambda spec: spec2wav(spec.T, n_fft, win_length, hop_length,
+                                                 n_iter), y_spec))
+
+    # Apply inverse pre-emphasis
+    pred_audio = signal.lfilter([1], [1, -preemphasis_coeff], pred_audio)
+    y_audio = signal.lfilter([1], [1, -preemphasis_coeff], y_audio)
+    return pred_audio, y_audio 
+
+def batch_data(dataflow,num):
+    dataflow[0] = list(dataflow[0])
+    dataflow[1] = list(dataflow[1])
+
+    s = []
+    while(len(s)<num):
+        x=random.randint(0,len(dataflow[0])-1)
+        if x not in s:
+            s.append(x)
+    #print(len(s))
+    batch1 = []
+    batch2 = []
+
+    for i in range(len(s)):
+        #print(i)
+        batch1.append(dataflow[0][s[i]])
+        batch2.append(dataflow[1][s[i]])
+
+    batch1 = np.array(batch1)
+    batch2 = np.array(batch2)
+    return batch1,batch2
+def batch_data2(dataflow,num):
+    dataflow[0] = list(dataflow[0])
+    dataflow[1] = list(dataflow[1])
+    dataflow[2] = list(dataflow[2])
+
+    s = []
+    while(len(s)<num):
+        x=random.randint(0,len(dataflow[0])-1)
+        if x not in s:
+            s.append(x)
+    batch1 = []
+    batch2 = []
+    batch3 = []
+
+    for i in range(len(s)):
+        batch1.append(dataflow[0][s[i]])
+        batch2.append(dataflow[1][s[i]])
+        batch3.append(dataflow[2][s[i]])
+    batch1 = np.array(batch1)
+    batch2 = np.array(batch2)
+    batch3 = np.array(batch3)
+    return batch1,batch2,batch3
+
 
 if __name__ == "__main__":
     #train
@@ -634,14 +843,24 @@ if __name__ == "__main__":
     config = []
     Net1Dataflow = dataflow_gen(Net1TrainDatadir, r'Net1Dataflow')
     
-    # NetTrainer = trainer(config)
-    # NetTrainer.trainNet1(Net1Dataflow)
+    NetTrainer = trainer(config)
+    NetTrainer.trainNet1(Net1Dataflow)
 
-    # Net2Dataflow = dataflow_gen(Net2TrainDatadir, r'Net2Dataflow')
-    # NetTrainer.trainNet2(Net2Dataflow)
-
+    Net2Dataflow = dataflow_gen(Net2TrainDatadir, r'Net2Dataflow')
+    NetTrainer.trainNet2(Net2Dataflow)
+    sourceFilename = "xxxx.wav"
     '''
-    evaluate train1
+    sr need to be 16000
     '''
+    data = {}
+    data['x_mfcc'], data['y_megDB'], data['y_melDB'] = get_mfccs_and_spectrogram(sourceFilename)
+    pred_audio, y_audio = conversion(NetTrainer, data)
 
-    
+    tf.summary.audio('A', y_audio, sr)#, max_outputs=batch_size)
+    tf.summary.audio('pred', pred_audio, sr)#, max_outputs=batch_size)
+
+    writer = tf.summary.FileWriter('F://github/')
+    with tf.Session() as sess:
+        summ = sess.run(tf.summary.merge_all())
+    writer.add_summary(summ)
+    writer.close()
