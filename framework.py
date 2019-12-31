@@ -557,8 +557,8 @@ class trainer():
         input: dataflow
         output: model paras
         '''
-        net1.train(dataflow)
-        #net1.test(dataflow)
+        #net1.train(dataflow)
+        net1.test(dataflow)
         self.model1 = net1
 
     def trainNet2(self, dataflow):
@@ -787,7 +787,7 @@ def spec2wav(mag, n_fft, win_length, hop_length, num_iters=50, phase=None):
 
     n_fft : int > 0 [scalar]
         FFT window size.
-4
+
     win_length  : int <= n_fft [scalar]
         The window will be of length `win_length` and then padded
         with zeros to match `n_fft`.
@@ -820,8 +820,9 @@ def spec2wav(mag, n_fft, win_length, hop_length, num_iters=50, phase=None):
             phase = np.angle(phase)
             stft = mag * np.exp(1.j * phase)
     return wav
+    
 
-def conversion(data ,preemphasis_coeff=0.97):
+def conversion(data ,data2,preemphasis_coeff=0.97):
     '''
     dataflow: one file MFCC
         apply net1 to get ppgs
@@ -829,28 +830,23 @@ def conversion(data ,preemphasis_coeff=0.97):
         restruction 
     output: wav file
     '''
-    pred_spec = predict2(data['x_mfcc'])
-
-    #pred_spec = data['y_megDB']
-
+    d1 = data['x_mfcc']  
+    d2 = [d1 for i in range(32)]
+    pred_spec1 = predict2(d2)
+    pred_spec =pred_spec1[0] 
     pred_spec = pred_spec.T
     # de-normalize
     pred_spec = denormalize_db(pred_spec, max_db, min_db)
     # Db to amp
     pred_spec = librosa.db_to_amplitude(pred_spec)
-
     # Emphasize the magnitude
     pred_spec = np.power(pred_spec, emphasis_magnitude)
-
     # Spectrogram to waveform
     pred_audio = spec2wav(pred_spec, n_fft, win_length, hop_length, num_iters=30, phase=None)
-
     # Apply inverse pre-emphasis
     pred_audio = signal.lfilter([1], [1, -preemphasis_coeff], pred_audio)
-
     # trim
     wav, _ = librosa.effects.trim(pred_audio)
-
     return wav.astype(np.float32) 
 
 def batch_data(dataflow,num):
@@ -905,7 +901,7 @@ if __name__ == "__main__":
     '''
     train1 
     '''
-    
+    '''
     config = []
     #train1
     Net1Dataflow = dataflow_gen(Net1TrainDatadir, r'Net1Dataflow')
@@ -913,24 +909,26 @@ if __name__ == "__main__":
     NetTrainer.trainNet1(Net1Dataflow)
 
     #train2
-    #Net2Dataflow = dataflow_gen(Net2TrainDatadir, r'Net2Dataflow') 
-    #NetTrainer.trainNet2(Net2Dataflow)
+    Net2Dataflow = dataflow_gen(Net2TrainDatadir, r'Net2Dataflow') 
+    NetTrainer.trainNet2(Net2Dataflow)
 
     #mfccs = [[[1 for i in range(40)]for j in range(401)]for k in range(32)]
     #spec = predict2(mfccs)
     #print(len(spec),len(spec[0]),len(spec[0][0]))
 
 '''
-    sourceFilename = r"D://study/programming/SLP/project/voice_conversion/datasets/arctic/bdl/wav/arctic_a0002.wav"
+    sourceFilename = r"C://Users/-dell/Desktop/voice/arctic_a0003.wav"
+    sourceFilename2 = r"C://Users/-dell/Desktop/SLP/arctic/slt/wav/arctic_a0003.wav"
     data = {}
+    data2 = {}
     data['x_mfcc'], data['y_megDB'], data['y_melDB'] = get_mfccs_and_spectrogram(sourceFilename)
-    pred_audio = conversion(data)
+    data2['x_mfcc'], data2['y_megDB'], data2['y_melDB'] = get_mfccs_and_spectrogram(sourceFilename2)
+    
+    pred_audio = conversion(data,data2)
     print(pred_audio.shape)
 
-    store_file = r'F://github/Source2Target/arctic_002.wav'
+    store_file = r'C://Users/-dell/Desktop/voice/result.wav'
 
     shutil.rmtree(store_file, ignore_errors=True)
     scipy.io.wavfile.write(store_file, sr, pred_audio)
-'''
 
-    
