@@ -1,0 +1,2 @@
+model_checkpoint_path: "train1_model"
+all_model_checkpoint_paths: "train1_model"

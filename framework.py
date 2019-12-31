@@ -12,13 +12,15 @@ import time
 time_start = time.time()
 import numpy as np
 import random
-batch_size1 = 4400
+import copy
+batch_size1 = 5000
+emphasis_magnitude = 1.2
 
 '''
 hyperparameters define
 '''
-Net1TrainDatadir = "C://Users/-dell/Desktop/SLP/TIMIT/TIMIT/TRAIN/*/*/*.WAV"
-Net1TestDatadir = "TIMIT/TIMIT/TEST/*/*/*.WAV"
+Net1TrainDatadir = "F://TIMIT/TIMIT/TIMIT/TRAIN/*/*/*.WAV"
+Net1TestDatadir =  "C://Users/-dell/Desktop/SLP/TIMIT/TIMIT/TEST/*/*/*.WAV"
 
 Net2TrainDatadir = "C://Users/-dell/Desktop/SLP/arctic/slt/wav/*.wav"
 Net1Batchsize = 20
@@ -44,7 +46,6 @@ phns = ['h#', 'aa', 'ae', 'ah', 'ao', 'aw', 'ax', 'ax-h', 'axr', 'ay', 'b', 'bcl
 numbers =10
 cost_value = 0.01
 acc_value = 0.9
-emphasis_magnitude = 1.2
 
 train2_hidden_units = 512
 train2_dropout_rate = 0
@@ -340,28 +341,46 @@ def predict1(x_mfcc):
     with tf.Session()as sess:
         saver1 = tf.train.import_meta_graph('train1_model.meta')
         saver1.restore(sess,tf.train.latest_checkpoint('./'))
-        # graph = tf.get_default_graph()
-        x = tf.placeholder(tf.float32,[None,401,40])
-        #ppgs1 = graph.get_tensor_by_name("ppgs:0")
-   
-        ppgs = sess.run('ppgs:0',feed_dict = {x:x_mfcc})
-                
-        return ppgs
- 
+        graph = tf.get_default_graph()
+    
+    
+        #y = graph.get_tensor_by_name('train1/Const_1:0')
+        x = graph.get_tensor_by_name('train1/Const:0')
+    
+        ppgs1 = graph.get_tensor_by_name("train1/ppgs:0")
+    
+    
+        ppgs = sess.run(ppgs1,feed_dict = {x :x_mfcc})   
+    return ppgs
+def test1(x_mfccs,y_ppgs) :
+    with tf.Session()as sess:
+        saver1 = tf.train.import_meta_graph('train1_model.meta')
+        saver1.restore(sess,tf.train.latest_checkpoint('./'))
+        graph = tf.get_default_graph()
+    
+    
+        y = graph.get_tensor_by_name('train1/Const_1:0')
+        x = graph.get_tensor_by_name('train1/Const:0')
+    
+        acc1 = graph.get_tensor_by_name("truediv_1:0")
+    
+    
+        acc = sess.run(acc1,feed_dict = {x :x_mfccs,y:y_ppgs})   
+    return acc
 def predict2(x_mfcc):
     ppgs = predict1(x_mfcc)
+
     with tf.Session()as sess:
         saver1 = tf.train.import_meta_graph('train2_model.meta')
         saver1.restore(sess,tf.train.latest_checkpoint('./'))
-        # graph = tf.get_default_graph()
-        x = tf.placeholder(tf.float32,[None,401,61])
-        #ppgs1 = graph.get_tensor_by_name("ppgs:0")
+        graph = tf.get_default_graph()
+        
+        ppgs1 = graph.get_tensor_by_name("Const_4:0")
     
     
-        #mfccs = [[[1 for i in range(40)]for j in range(401)]for k in range (1)]
-        #mfccs = np.array(mfccs)
+        pred_spec1 = graph.get_tensor_by_name("pred_spec/BiasAdd:0")
     
-        pred_spec = sess.run('pred_spec/BiasAdd:0',feed_dict = {x:ppgs})
+        pred_spec = sess.run(pred_spec1,feed_dict = {ppgs1:ppgs})
     return pred_spec
 
 class model1():
@@ -373,6 +392,16 @@ class model1():
             3. the initial value of parameters
         '''
         pass
+    def test(self,dataflow):
+        dataflow[0] = np.asarray(dataflow[0])
+        dataflow[1] = np.asarray(dataflow[1])
+        dataflow[1] = dataflow[1].astype(int)
+
+        x_mfccs,y_ppgs = batch_data(dataflow,32)
+
+        print(test1(x_mfccs,y_ppgs))
+
+
 
     def train(self, dataflow):
         '''
@@ -398,22 +427,37 @@ class model1():
         x_mfccs,y_ppgs = batch_data(dataflow,32)
         is_training = 1
 
-        ppgs, preds, logits = network1(x_mfccs, is_training)
+        
+        with tf.variable_scope('train1'):
+
+            x_mfccs = tf.convert_to_tensor(x_mfccs)
+            y_ppgs = tf.convert_to_tensor(y_ppgs)
+        
+            ppgs, preds, logits = network1(x_mfccs, is_training)
+        
+        
+    
+    
         #y_ppgs=tf.to_int32(y_ppgs)
  
         cost = loss1(x_mfccs,logits,y_ppgs)
-          
+        
+        
+        
         train_step = tf.train.AdamOptimizer(0.0003).minimize(cost)
 
         acc = acc1(x_mfccs,preds,y_ppgs)
 
+
+
         # Add ops to save and restore all the variables.
         saver = tf.train.Saver()
-        # dict1 = {}
+        dict1 = {}
         with tf.Session()as sess:
             
+            
             sess.run(tf.global_variables_initializer())
-            for i in range(10000):
+            for i in range(7000):
                 batch1,batch2 = batch_data(dataflow,32)
                 time1 = time.time()
                 print("第",i+1,"次训练：")
@@ -421,10 +465,17 @@ class model1():
                 print(cost.eval())
                 time2 = time.time()
                 print("花费时间：",time2-time1)
+                #print(y_ppgs)
+                #print(x_mfccs)
+                print("mfcc:",x_mfccs)   
+            
             print("准确率是：",acc.eval())
-            print(ppgs)
-            print(acc)
+            print("y_ppgs:",y_ppgs)
+            print("ppgs:",ppgs)
+            print("acc:",acc)
             saver.save(sess, 'train1_model')
+    
+
     
 class model2():
     def __init__(self, config):
@@ -442,21 +493,34 @@ class model2():
             1. what's the number of columns and rows
             2. what does the columns and rows mean
         '''
+
         x = tf.placeholder(tf.float32,[None,401,40])
         y = tf.placeholder(tf.float32,[None,401,257])
         z = tf.placeholder(tf.float32,[None,401,80])
         keep_prob = tf.placeholder(tf.float32)
         
+        dataflow[0] = np.asarray(dataflow[0])
+        dataflow[1] = np.asarray(dataflow[1])
+        dataflow[2] = np.asarray(dataflow[2])
+        
         x_mfcc,y_spec,y_mel = batch_data2(dataflow,32)
         
-        x_mfcc = np.asarray(x_mfcc)#x_mfcc
-        y_spec = np.asarray(y_spec)#y_spec
-        y_mel = np.asarray(y_mel)#y_mel
         
-        #ppgs = model1.predict(x_mfcc)
-        ppgs = predict1(x_mfcc)
+
+        
+        y_spec = tf.convert_to_tensor(y_spec)#y_spec
+        y_mel = tf.convert_to_tensor(y_mel)#y_mel
         
         is_training =1
+
+        
+
+        ppgs = predict1(x_mfcc)
+
+        #print(ppgs)
+        ppgs = tf.convert_to_tensor(ppgs)
+        
+       
                 
         pred_spec, pred_mel = network2(ppgs, is_training,y_mel,y_spec)
         
@@ -477,8 +541,10 @@ class model2():
                 print(cost2.eval())
                 time2 = time.time()
                 print("花费时间：",time2-time1)
-                print(pred_spec)
-            
+                print("pred_spec:",pred_spec)
+                #print("x_mfcc:",x_mfcc)
+                print("ppgs:",ppgs)
+                print("y_spec:",y_spec)
             saver2.save(sess, 'train2_model')
 
 class trainer():
@@ -492,6 +558,7 @@ class trainer():
         output: model paras
         '''
         net1.train(dataflow)
+        #net1.test(dataflow)
         self.model1 = net1
 
     def trainNet2(self, dataflow):
@@ -698,7 +765,6 @@ def dataflow_gen(dir, type):
         dataflow.append(data_y_mel)
     return dataflow
 
-
 def denormalize_db(norm_db, max_db, min_db):
     """
     Denormalize the normalized values to be original dB-scaled value.
@@ -710,7 +776,7 @@ def denormalize_db(norm_db, max_db, min_db):
     db = np.clip(norm_db, 0, 1) * (max_db - min_db) + min_db
     return db
 
-def spec2wav(mag, n_fft, win_length, hop_length, num_iters=30, phase=None):
+def spec2wav(mag, n_fft, win_length, hop_length, num_iters=50, phase=None):
     """
     Get a waveform from the magnitude spectrogram by Griffin-Lim Algorithm.
 
@@ -721,7 +787,7 @@ def spec2wav(mag, n_fft, win_length, hop_length, num_iters=30, phase=None):
 
     n_fft : int > 0 [scalar]
         FFT window size.
-
+4
     win_length  : int <= n_fft [scalar]
         The window will be of length `win_length` and then padded
         with zeros to match `n_fft`.
@@ -755,7 +821,7 @@ def spec2wav(mag, n_fft, win_length, hop_length, num_iters=30, phase=None):
             stft = mag * np.exp(1.j * phase)
     return wav
 
-def conversion(data, preemphasis_coeff=0.97):
+def conversion(data ,preemphasis_coeff=0.97):
     '''
     dataflow: one file MFCC
         apply net1 to get ppgs
@@ -763,32 +829,29 @@ def conversion(data, preemphasis_coeff=0.97):
         restruction 
     output: wav file
     '''
-
-    # read models
     pred_spec = predict2(data['x_mfcc'])
-    y_spec = data['y_megDB']
 
+    #pred_spec = data['y_megDB']
+
+    pred_spec = pred_spec.T
+    # de-normalize
     pred_spec = denormalize_db(pred_spec, max_db, min_db)
-    y_spec = denormalize_db(y_spec, max_db, min_db)
-
     # Db to amp
     pred_spec = librosa.db_to_amplitude(pred_spec)
-    y_spec = librosa.db_to_amplitude(y_spec)
 
     # Emphasize the magnitude
     pred_spec = np.power(pred_spec, emphasis_magnitude)
-    y_spec = np.power(y_spec, emphasis_magnitude)
 
     # Spectrogram to waveform
-    pred_audio = np.array(map(lambda spec: spec2wav(spec.T, n_fft, win_length, hop_length,
-                                               n_iter), pred_spec))
-    y_audio = np.array(map(lambda spec: spec2wav(spec.T, n_fft, win_length, hop_length,
-                                                 n_iter), y_spec))
+    pred_audio = spec2wav(pred_spec, n_fft, win_length, hop_length, num_iters=30, phase=None)
 
     # Apply inverse pre-emphasis
     pred_audio = signal.lfilter([1], [1, -preemphasis_coeff], pred_audio)
-    y_audio = signal.lfilter([1], [1, -preemphasis_coeff], y_audio)
-    return pred_audio, y_audio 
+
+    # trim
+    wav, _ = librosa.effects.trim(pred_audio)
+
+    return wav.astype(np.float32) 
 
 def batch_data(dataflow,num):
     dataflow[0] = list(dataflow[0])
@@ -835,32 +898,39 @@ def batch_data2(dataflow,num):
     return batch1,batch2,batch3
 
 
+import shutil
+
 if __name__ == "__main__":
     #train
     '''
     train1 
     '''
-    config = []
-    Net1Dataflow = dataflow_gen(Net1TrainDatadir, r'Net1Dataflow')
     
+    config = []
+    #train1
+    Net1Dataflow = dataflow_gen(Net1TrainDatadir, r'Net1Dataflow')
     NetTrainer = trainer(config)
     NetTrainer.trainNet1(Net1Dataflow)
 
-    Net2Dataflow = dataflow_gen(Net2TrainDatadir, r'Net2Dataflow')
-    NetTrainer.trainNet2(Net2Dataflow)
-    sourceFilename = "xxxx.wav"
-    '''
-    sr need to be 16000
-    '''
+    #train2
+    #Net2Dataflow = dataflow_gen(Net2TrainDatadir, r'Net2Dataflow') 
+    #NetTrainer.trainNet2(Net2Dataflow)
+
+    #mfccs = [[[1 for i in range(40)]for j in range(401)]for k in range(32)]
+    #spec = predict2(mfccs)
+    #print(len(spec),len(spec[0]),len(spec[0][0]))
+
+'''
+    sourceFilename = r"D://study/programming/SLP/project/voice_conversion/datasets/arctic/bdl/wav/arctic_a0002.wav"
     data = {}
     data['x_mfcc'], data['y_megDB'], data['y_melDB'] = get_mfccs_and_spectrogram(sourceFilename)
-    pred_audio, y_audio = conversion(NetTrainer, data)
+    pred_audio = conversion(data)
+    print(pred_audio.shape)
 
-    tf.summary.audio('A', y_audio, sr)#, max_outputs=batch_size)
-    tf.summary.audio('pred', pred_audio, sr)#, max_outputs=batch_size)
+    store_file = r'F://github/Source2Target/arctic_002.wav'
 
-    writer = tf.summary.FileWriter('F://github/')
-    with tf.Session() as sess:
-        summ = sess.run(tf.summary.merge_all())
-    writer.add_summary(summ)
-    writer.close()
+    shutil.rmtree(store_file, ignore_errors=True)
+    scipy.io.wavfile.write(store_file, sr, pred_audio)
+'''
+
+    
